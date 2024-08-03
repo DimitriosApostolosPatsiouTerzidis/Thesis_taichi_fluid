@@ -27,22 +27,23 @@ for i, val in enumerate([0, 1, 0, 2, 1, 3, 2, 3, 4, 5, 4, 6, 5, 7, 6, 7, 0, 4, 1
 
 
 density = 100.0
-stifness = 8e3
+stifness = 16e3
 gravity = -9.81
 restitution_coef = 0.001
 dt = 0.00004
 substeps = 15
 
 #particle space dimensions
-x_dim, y_dim, z_dim = 20, 2, 10
+x_dim, y_dim, z_dim = 25, 25, 25
 NUM_PARTICLES = x_dim * y_dim * z_dim
 print(f"Number of particles: {NUM_PARTICLES}")
 GRID_SIZE = 32
-PARTICLE_RADIUS = 0.006
+PARTICLE_RADIUS = 0.005
 PADDING = PARTICLE_RADIUS * 2
 START_POS = ti.Vector.field(3, dtype=ti.f32, shape=1)
 START_POS[0].xyz = 0.4, 0.4, 0.4
 color_mode = 0 #0->default || 1->rng_color
+
 
 @ti.dataclass
 class fluidPar:     #particle struct
@@ -87,8 +88,10 @@ def init_particles_pos(pfield : ti.template(), start: ti.template()):
         for j in range(y_dim):
             for k in range(z_dim):
                 index = i * y_dim * z_dim + j * z_dim + k
-                pfield[index].p = start[0].x + i * ((PARTICLE_RADIUS * 2) + PADDING), start[0].y + j * ((PARTICLE_RADIUS * 2) + PADDING), start[0].z + k * ((PARTICLE_RADIUS * 2) + PADDING)
-                pfield[index].m = density * math.pi * PARTICLE_RADIUS ** 2
+                pfield[index].p.x = start[0].x + i * ((PARTICLE_RADIUS * 2) + PADDING + (ti.random() * (PADDING/16)))
+                pfield[index].p.y = start[0].y + j * ((PARTICLE_RADIUS * 2) + PADDING + (ti.random() * (PADDING/16)))
+                pfield[index].p.z = start[0].z + k * ((PARTICLE_RADIUS * 2) + PADDING + (ti.random() * (PADDING/16)))
+                pfield[index].m = (4/3) * density * math.pi * PARTICLE_RADIUS ** 3
                 pfield[index].id = index
     #print(f"mass: {pf[0].mass}")
 
@@ -120,7 +123,7 @@ def update(fp):
 
 @ti.func
 def apply_bc(fp):
-    velocity_damping = 0.3
+    velocity_damping = 0.9
     x = fp.p.x
     y = fp.p.y
     z = fp.p.z
@@ -183,13 +186,14 @@ class SpatialGrid:
 
 
 
-        #max_particles_per_cell = int(ti.floor((self.cell_size / (2 * PARTICLE_RADIUS))) ** 3)
+        print(f"\tEstimated max particles per cell: {int(ti.floor((self.cell_size / (2 * PARTICLE_RADIUS))) ** 3)}")
         #self.id_in_cell = ti.field(int)
         #self.grid = ti.root.dense(ti.ijk, self.grid_size).dynamic(ti.l, 2 * max_particles_per_cell, chunk_size = 32)
         #self.cell = self.grid.dynamic(ti.l, 2 * max_particles_per_cell, chunk_size = 16)
         #self.grid.place(self.id_in_cell)
 
         print(f"\tParticle Diameter: {PARTICLE_RADIUS * 2}")
+        print(f"Particle Mass: {pf[0].m}")
         print(f"\tGrid Size: {grid_size} x {grid_size} x {grid_size} ")
         print(f"\tNumber of Grid Cells: {grid_size**3}")
         print(f"\tCell size: {self.cell_size} x {self.cell_size} x {self.cell_size}")
@@ -223,18 +227,19 @@ class SpatialGrid:
 
     @ti.func
     def calculate_prefix_sum(self): #with this sequence of iterations independancy is achieved along with the ability of parallelization
+        #self.cur_pointer.fill(0)
         self.prefix_sum[0, 0, 0] = 0
         ti.loop_config(serialize=True)
         for i in range(1, self.grid_size): #cells[i,0,0] init porefix sum sequentially
             self.prefix_sum[i,0,0] = self.prefix_sum[i-1, 0, 0] + self.layer_sum[i-1]
 
-        #ti.loop_config(block_dim = self.grid_size)
+        ti.loop_config(block_dim = self.grid_size)
         for i in range(self.grid_size):
             for j in range(1, self.grid_size): #cells[i,j,0] sequentially accumulate ro_count to prefix
                 self.prefix_sum[i,j,0] = self.prefix_sum[i, j-1, 0] + self.row_sum[i,j-1]
 
 
-        #ti.loop_config(block_dim = self.grid_size)
+        ti.loop_config(block_dim = self.grid_size)
         #ti.loop_config(serialize=True)
         for i in range(self.grid_size):
             for j in range(self.grid_size):
@@ -253,7 +258,6 @@ class SpatialGrid:
 
     @ti.func
     def populate_par_id(self, pfield: ti.template()):
-        self.cur_pointer.fill(0)
         #ti.loop_config(serialize=True)
         for i in range(NUM_PARTICLES):
             cell_id = ti.cast((ti.floor(pfield[i].p / self.cell_size)), ti.i32)
@@ -266,28 +270,38 @@ class SpatialGrid:
 
     @ti.func
     def resolve_collision(self, pfield: ti.template(), i: ti.i32, j: ti.i32):
+        #TODO: implement NN
+        #TODO: ensure non compresion
         rel_pos = pfield[j].p - pfield[i].p
         dist = ti.sqrt(rel_pos[0]**2 + rel_pos[1]**2 + rel_pos[2]**2)
         delta = -dist + (2 * PARTICLE_RADIUS) #distance with radius accounted
+        #normal = rel_pos / delta
+        #print(f"normal:{normal}")
+        #print(f"p[{i}].v:{pfield[i].v}, p[{j}].v:{pfield[j].v}")
         if delta > 0: # in contact
-            print(f"collision: par[{i}] - par[{j}]")
-            normal = rel_pos / delta
+            #print(f"collision: par[{i}] - par[{j}]")
+            normal = rel_pos / dist
             f1 = normal * delta * stifness
             #Damping force
             M = (pfield[i].m * pfield[j].m) / (pfield[i].m + pfield[j].m)
             K = stifness
-            C = 2. * (1. / ti.sqrt(1. + (math.pi / ti.log(restitution_coef)) ** 2)) * ti.sqrt(K * M)
+            C =  (1. / ti.sqrt(1. + (math.pi / ti.log(restitution_coef)) ** 2)) * ti.sqrt(K * M)
             V = (pfield[j].v - pfield[i].v) * normal
             f2 = C * V * normal
-            pf[i].f += f2 - f1
-            pf[j].f -= f2 - f1
+            #print(f"V:{V}")
+            #print(f"normal:{normal}")
+            pfield[i].f += f2 - f1
+            pfield[j].f -= f2 - f1
             #print(f"pf[{i}] force: {pf[i].f} || pf[{j}] force: {pf[j].f}")
 
 
 
     @ti.kernel
     def collision_detection(self, pfield: ti.template()):
+
         for i in range(NUM_PARTICLES):
+            #print(f"Particle position: {i} id:{grid.par_id[i]}")
+
             pf[i] = apply_gravity(pf[i])
             p = pfield[i].p
             cell_size = self.cell_size
@@ -310,8 +324,6 @@ class SpatialGrid:
                             j = self.par_id[p_id]
                             #print(f"p_id: [{p_id}] i:[{i}] j:[{j}]")
                             if i < j:   #no overlapping iterations
-                                #TODO: implement collision
-                                #TODO: transfer physics to NN
                                 #print(f"p_id: [{p_id}] i:[{i}] j:[{j}]")
                                 #print(f"neighbors of {i}: {self.par_id[p_id]}")
                                 self.resolve_collision(pfield, i, j)
@@ -333,18 +345,8 @@ class SpatialGrid:
 
 grid = SpatialGrid(GRID_SIZE)
 grid.update_grid(pf)
-tempmax =0
-for i in range(GRID_SIZE**3):
-    #print(f"Particle position: {i} id:{grid.par_id[i]}")
-    print(f"{grid.cur_pointer[i]}")
-'''
-    if grid.par_id[i] > tempmax:
-        tempmax = grid.par_id[i]
-print(f"Max Particle ID: {tempmax}")
 
-for i in range(grid.cur_pointer.shape[0]):
-    print(i, grid.cur_pointer[i])
-'''
+
 
 @ti.func
 def update_particle(fp):
@@ -380,7 +382,7 @@ while window.running:
     camera.track_user_inputs(window, movement_speed=0.02, hold_key=ti.ui.LMB)
     scene.set_camera(camera)
     scene.ambient_light((0.8, 0.8, 0.8))
-    scene.point_light(pos=(0.5, 4.5, 6.5), color=(1, 1, 1))
+    scene.point_light(pos=(0.5, 2.5, 6.5), color=(1, 1, 1))
     scene.particles(pf.p, per_vertex_color = colors, radius = PARTICLE_RADIUS)
     scene.lines(boundaries, indices=box_lines_indices, color=(0.99, 0.68, 0.28), width=1.0)
     canvas.scene(scene)
