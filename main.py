@@ -3,7 +3,7 @@ import math
 import numpy as np
 import time
 
-ti.init(arch=ti.cuda)
+ti.init(arch=ti.gpu)
 vec3 = ti.math.vec3 #initializing taichi vec3 type
 ivec3 = ti.math.ivec3 #initializing taichi vec3 type
 
@@ -26,22 +26,22 @@ for i, val in enumerate([0, 1, 0, 2, 1, 3, 2, 3, 4, 5, 4, 6, 5, 7, 6, 7, 0, 4, 1
 
 
 
-density = 100.0
-stifness = 16e3
+density = 1000.0
+stifness = 8e3
 gravity = -9.81
-restitution_coef = 0.001
+restitution_coef = 0.09
 dt = 0.00004
 substeps = 15
 
 #particle space dimensions
-x_dim, y_dim, z_dim = 25, 25, 25
+x_dim, y_dim, z_dim = 35, 40, 35
 NUM_PARTICLES = x_dim * y_dim * z_dim
 print(f"Number of particles: {NUM_PARTICLES}")
-GRID_SIZE = 32
-PARTICLE_RADIUS = 0.005
-PADDING = PARTICLE_RADIUS * 2
+GRID_SIZE = 64
+PARTICLE_RADIUS = 0.004
+PADDING = PARTICLE_RADIUS/2
 START_POS = ti.Vector.field(3, dtype=ti.f32, shape=1)
-START_POS[0].xyz = 0.4, 0.4, 0.4
+START_POS[0].xyz = 0.1, 0.5, 0.1
 color_mode = 0 #0->default || 1->rng_color
 
 
@@ -54,6 +54,7 @@ class fluidPar:     #particle struct
     a: vec3         #acceleration
     color: vec3     #color value
     m: ti.f32       #mass calculated based on given density
+    #rig: ti.i32     #if 1 represents rigid body voxel
 
 pf = fluidPar.field(shape = (NUM_PARTICLES,))
 colors = vec3.field(shape = (NUM_PARTICLES,)) #due to taichi gui restrictions particle colors cannot be included in the struct
@@ -83,20 +84,28 @@ def static_color(cfield: ti.template()):
 
 @ti.kernel
 #initialization of particles based given starting position and dimensions
-def init_particles_pos(pfield : ti.template(), start: ti.template()):
+#if reset = 1 clear all forces and velocities
+def init_particles_pos(pfield : ti.template(), start: ti.template(), reset: ti.i32):
+    #TODO: replace with one loop in range(NUM_PARTICLES), for optimal parallel
     for i in range(x_dim):
         for j in range(y_dim):
             for k in range(z_dim):
                 index = i * y_dim * z_dim + j * z_dim + k
-                pfield[index].p.x = start[0].x + i * ((PARTICLE_RADIUS * 2) + PADDING + (ti.random() * (PADDING/16)))
-                pfield[index].p.y = start[0].y + j * ((PARTICLE_RADIUS * 2) + PADDING + (ti.random() * (PADDING/16)))
-                pfield[index].p.z = start[0].z + k * ((PARTICLE_RADIUS * 2) + PADDING + (ti.random() * (PADDING/16)))
+                pfield[index].p.x = start[0].x + i * ((PARTICLE_RADIUS * 2) + PADDING) + (ti.random() * (PARTICLE_RADIUS/4))
+                pfield[index].p.y = start[0].y + j * ((PARTICLE_RADIUS * 2) + PADDING) + (ti.random() * (PARTICLE_RADIUS/4))
+                pfield[index].p.z = start[0].z + k * ((PARTICLE_RADIUS * 2) + PADDING) + (ti.random() * (PARTICLE_RADIUS/4))
                 pfield[index].m = (4/3) * density * math.pi * PARTICLE_RADIUS ** 3
                 pfield[index].id = index
+                if reset == 1:
+                    pfield[index].v = vec3(0.0, 0.0, 0.0)
+                    pfield[index].a = vec3(0.0, 0.0, 0.0)
+                    pfield[index].f = vec3(0.0, 0.0, 0.0)
+
     #print(f"mass: {pf[0].mass}")
 
 
-init_particles_pos(pf, START_POS)
+
+init_particles_pos(pf, START_POS, 0)
 
 #set color mode
 if color_mode == 0:
@@ -106,6 +115,7 @@ elif color_mode == 1:
 else:
     print("Invalid color mode\n\t0 - Static Color\n\t1 - Random Color")
     exit(-1)
+
 
 @ti.func
 def apply_gravity(fp):
@@ -123,7 +133,8 @@ def update(fp):
 
 @ti.func
 def apply_bc(fp):
-    velocity_damping = 0.9
+    velocity_damping = 0.5
+    #friction = 0.99
     x = fp.p.x
     y = fp.p.y
     z = fp.p.z
@@ -131,6 +142,7 @@ def apply_bc(fp):
     if y - PARTICLE_RADIUS < 0:
         fp.p.y = PARTICLE_RADIUS
         fp.v.y *= -velocity_damping
+        #fp.v.xz *= friction
     elif y + PARTICLE_RADIUS > y_max:
         fp.p.y = 1.0 - PARTICLE_RADIUS
         fp.v.y *= -velocity_damping
@@ -149,21 +161,6 @@ def apply_bc(fp):
         fp.p.x = 1.0 - PARTICLE_RADIUS
         fp.v.x *= -velocity_damping
     return fp
-
-
-
-
-
-
-
-'''
-grid_n = ivec3(32,32,32)   #number of cells on each dimension
-grid_size = 1.0 / grid_n.x #simulation domain of size [0, 1]
-print(f"Grid size: {grid_n}x{grid_n}x{grid_n}")
-'''
-
-
-
 
 
 
@@ -281,6 +278,7 @@ class SpatialGrid:
         if delta > 0: # in contact
             #print(f"collision: par[{i}] - par[{j}]")
             normal = rel_pos / dist
+            #print(f"{delta}")
             f1 = normal * delta * stifness
             #Damping force
             M = (pfield[i].m * pfield[j].m) / (pfield[i].m + pfield[j].m)
@@ -302,7 +300,7 @@ class SpatialGrid:
         for i in range(NUM_PARTICLES):
             #print(f"Particle position: {i} id:{grid.par_id[i]}")
 
-            pf[i] = apply_gravity(pf[i])
+            pfield[i] = apply_gravity(pfield[i])
             p = pfield[i].p
             cell_size = self.cell_size
             cell_id = ti.cast((ti.floor(p / cell_size)), ti.i32)
@@ -323,6 +321,7 @@ class SpatialGrid:
                         for p_id in range(self.head_pointer[linear_idx], self.tail_pointer[linear_idx]):
                             j = self.par_id[p_id]
                             #print(f"p_id: [{p_id}] i:[{i}] j:[{j}]")
+
                             if i < j:   #no overlapping iterations
                                 #print(f"p_id: [{p_id}] i:[{i}] j:[{j}]")
                                 #print(f"neighbors of {i}: {self.par_id[p_id]}")
@@ -337,8 +336,6 @@ class SpatialGrid:
         self.calculate_prefix_sum()
         self.populate_par_id(pfield)
         #self.collision_detection(pfield)
-
-
 
 
 
@@ -367,11 +364,12 @@ window = ti.ui.Window("Test for Drawing 3d-particles", (1280, 720))
 canvas = window.get_canvas()
 scene = window.get_scene()
 camera = ti.ui.Camera()
-camera.position(1.0, 1.4, 1.2)
+camera.position(1.5, 0.4, 1.5)
 camera.up(0,1,0)
 camera.lookat(0, 0.1, 0)
 
 while window.running:
+    #print(f"P_Gravity: {gravity}")
     #print(f"particle_0 position: {pf[2000].p.x}, {pf[2000].p.y}, {pf[2000].p.z}")
     grid.update_grid(pf)
     for s in range(substeps):
@@ -383,7 +381,10 @@ while window.running:
     scene.set_camera(camera)
     scene.ambient_light((0.8, 0.8, 0.8))
     scene.point_light(pos=(0.5, 2.5, 6.5), color=(1, 1, 1))
-    scene.particles(pf.p, per_vertex_color = colors, radius = PARTICLE_RADIUS)
+    scene.particles(pf.p, per_vertex_color = colors, radius = PARTICLE_RADIUS * 0.7)
     scene.lines(boundaries, indices=box_lines_indices, color=(0.99, 0.68, 0.28), width=1.0)
     canvas.scene(scene)
     window.show()
+    if window.is_pressed(ti.ui.SPACE):
+        init_particles_pos(pf, START_POS, 1)
+
