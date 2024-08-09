@@ -3,10 +3,13 @@ import math
 import numpy as np
 import time
 from Spatial_Grid import SpatialGrid
+from Constants import *
+
 
 ti.init(arch=ti.gpu)
-vec3 = ti.math.vec3 #initializing taichi vec3 type
-ivec3 = ti.math.ivec3 #initializing taichi vec3 type
+START_POS = ti.Vector.field(3, dtype=ti.f32, shape=1)
+START_POS[0].xyz = 0.1, 0.3, 0.1
+
 
 
 x_max, y_max, z_max = 1.0, 1.0, 1.0
@@ -27,23 +30,7 @@ for i, val in enumerate([0, 1, 0, 2, 1, 3, 2, 3, 4, 5, 4, 6, 5, 7, 6, 7, 0, 4, 1
 
 
 
-density = 1000.0
-stifness = 8e3
-gravity = -9.81
-restitution_coef = 0.09
-dt = 0.00004
-substeps = 15
 
-#particle space dimensions
-x_dim, y_dim, z_dim = 35, 40, 35
-NUM_PARTICLES = x_dim * y_dim * z_dim
-print(f"Number of particles: {NUM_PARTICLES}")
-GRID_SIZE = 64
-PARTICLE_RADIUS = 0.004
-PADDING = PARTICLE_RADIUS/2
-START_POS = ti.Vector.field(3, dtype=ti.f32, shape=1)
-START_POS[0].xyz = 0.1, 0.5, 0.1
-color_mode = 0 #0->default || 1->rng_color
 
 
 @ti.dataclass
@@ -55,7 +42,8 @@ class fluidPar:     #particle struct
     a: vec3         #acceleration
     color: vec3     #color value
     m: ti.f32       #mass calculated based on given density
-    #rig: ti.i32     #if 1 represents rigid body voxel
+    knn: ti.i32     #number of parrticles in neighborhood
+    #rig: ti.i32    #if 1 represents rigid body voxel
 
 pf = fluidPar.field(shape = (NUM_PARTICLES,))
 colors = vec3.field(shape = (NUM_PARTICLES,)) #due to taichi gui restrictions particle colors cannot be included in the struct
@@ -221,11 +209,11 @@ while window.running:
     #print(f"Frame: {frame}")
     #save_frames(frame, 400, 1400)
 
-
     window.show()
 
     if window.is_pressed(ti.ui.SPACE):
-        init_particles_pos(pf, START_POS, 1)
+        init_particles_pos(pf, START_POS, 0)
     elif window.is_pressed('n'):
-        print()
+        #print(f"Average Neighbors: {grid.average_n(pf)}")
+        print(f"Average Particles per cell: {grid.average_par_count()}")
 

@@ -1,29 +1,10 @@
 import taichi as ti
 import math
+from Constants import *
 #from main import apply_gravity
 
 ti.init(arch=ti.gpu)
-vec3 = ti.math.vec3 #initializing taichi vec3 type
 
-
-#TODO: Resolve double initialization
-density = 1000.0
-stifness = 8e3
-gravity = -9.81
-restitution_coef = 0.09
-dt = 0.00004
-substeps = 15
-
-#particle space dimensions
-x_dim, y_dim, z_dim = 35, 40, 35
-NUM_PARTICLES = x_dim * y_dim * z_dim
-print(f"Number of particles: {NUM_PARTICLES}")
-GRID_SIZE = 64
-PARTICLE_RADIUS = 0.004
-PADDING = PARTICLE_RADIUS/2
-START_POS = ti.Vector.field(3, dtype=ti.f32, shape=1)
-START_POS[0].xyz = 0.1, 0.5, 0.1
-color_mode = 0 #0->default || 1->rng_color
 
 
 
@@ -140,13 +121,8 @@ class SpatialGrid:
         rel_pos = pfield[j].p - pfield[i].p
         dist = ti.sqrt(rel_pos[0]**2 + rel_pos[1]**2 + rel_pos[2]**2)
         delta = -dist + (2 * PARTICLE_RADIUS) #distance with radius accounted
-        #normal = rel_pos / delta
-        #print(f"normal:{normal}")
-        #print(f"p[{i}].v:{pfield[i].v}, p[{j}].v:{pfield[j].v}")
         if delta > 0: # in contact
-            #print(f"collision: par[{i}] - par[{j}]")
             normal = rel_pos / dist
-            #print(f"{delta}")
             f1 = normal * delta * stifness
             #Damping force
             M = (pfield[i].m * pfield[j].m) / (pfield[i].m + pfield[j].m)
@@ -154,11 +130,8 @@ class SpatialGrid:
             C =  (1. / ti.sqrt(1. + (math.pi / ti.log(restitution_coef)) ** 2)) * ti.sqrt(K * M)
             V = (pfield[j].v - pfield[i].v) * normal
             f2 = C * V * normal
-            #print(f"V:{V}")
-            #print(f"normal:{normal}")
             pfield[i].f += f2 - f1
             pfield[j].f -= f2 - f1
-            #print(f"pf[{i}] force: {pf[i].f} || pf[{j}] force: {pf[j].f}")
 
 
 
@@ -166,8 +139,7 @@ class SpatialGrid:
     def collision_detection(self, pfield: ti.template()):
 
         for i in range(NUM_PARTICLES):
-            #print(f"Particle position: {i} id:{grid.par_id[i]}")
-
+            pfield[i].knn = 0
             pfield[i] = apply_gravity(pfield[i])
             p = pfield[i].p
             cell_size = self.cell_size
@@ -188,12 +160,10 @@ class SpatialGrid:
                         linear_idx = cell_i * self.grid_size * self.grid_size + cell_j * self.grid_size + cell_k
                         for p_id in range(self.head_pointer[linear_idx], self.tail_pointer[linear_idx]):
                             j = self.par_id[p_id]
-                            #print(f"p_id: [{p_id}] i:[{i}] j:[{j}]")
-
                             if i < j:   #no overlapping iterations
-                                #print(f"p_id: [{p_id}] i:[{i}] j:[{j}]")
-                                #print(f"neighbors of {i}: {self.par_id[p_id]}")
                                 self.resolve_collision(pfield, i, j)
+                        pfield[i].knn += self.par_count[cell_i, cell_j, cell_k]
+
 
     @ti.kernel
     def update_grid(self, pfield: ti.template()):
@@ -204,3 +174,24 @@ class SpatialGrid:
         self.calculate_prefix_sum()
         self.populate_par_id(pfield)
         #self.collision_detection(pfield)
+    @ti.kernel
+    def average_n(self, pfield: ti.template()) -> ti.i32:
+        sum = 0
+        for i in range(NUM_PARTICLES):
+            sum += pfield[i].knn
+
+        return sum / NUM_PARTICLES
+
+    @ti.kernel
+    def average_par_count(self) -> ti.f32:
+        sum = 0
+        active_cells = 0
+        for I in ti.grouped(self.par_count):
+            if self.par_count[I] > 0:
+                active_cells += 1
+                sum += self.par_count[I]
+
+        return sum / active_cells
+
+
+
