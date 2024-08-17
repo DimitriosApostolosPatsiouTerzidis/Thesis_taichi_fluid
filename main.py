@@ -247,6 +247,7 @@ camera.position(1.5, 0.4, 1.5)
 camera.up(0,1,0)
 camera.lookat(0, 0.1, 0)
 frame = 0
+pause = 1
 
 
 
@@ -271,12 +272,12 @@ while window.running:
         print(" Invalid color mode\n\t0 - Static Color Mode\n\t1 - Random Color Mode\n\t Velocity Color Mode")
         exit(-1)
 
-
-    grid.update_grid(pf)
-    for s in range(substeps):
-        grid.collision_detection(pf)
-        step(pf)
-        #grid.update_grid(pf)
+    if pause == 1:
+        grid.update_grid(pf)
+        for s in range(substeps):
+            grid.collision_detection(pf)
+            step(pf)
+            #grid.update_grid(pf)
 
     camera.track_user_inputs(window, movement_speed=0.02, hold_key=ti.ui.LMB)
     scene.set_camera(camera)
@@ -291,9 +292,11 @@ while window.running:
 
     window.show()
 
-    if window.is_pressed(ti.ui.SPACE):
+    if window.is_pressed("r"):
         init_particles_pos(pf, START_POS, 0)
     elif window.is_pressed('n'):
         #print(f"Average Neighbors: {grid.average_n(pf)}")
         print(f"Average Particles per cell: {grid.average_par_count()}")
+    elif window.is_pressed(ti.ui.SPACE):
+        pause *= -1
 
