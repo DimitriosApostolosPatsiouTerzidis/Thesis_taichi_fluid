@@ -2,17 +2,19 @@ import taichi as ti
 import math
 import numpy as np
 import time
+
+from taichi.examples.features.io.export_mesh import alpha
+
 from Spatial_Grid import SpatialGrid
 from Constants import *
 
 
-ti.init(arch=ti.gpu)
+ti.init(arch=ti.cuda)
 START_POS = ti.Vector.field(3, dtype=ti.f32, shape=1)
-START_POS[0].xyz = 0.1, 0.3, 0.1
+START_POS[0].xyz = 0.1, 0.6, 0.1
 
 
 
-x_max, y_max, z_max = 1.0, 1.0, 1.0
 boundaries = ti.Vector.field(3, dtype=ti.f32, shape = 8)
 boundaries[0] = ti.Vector([0.0, 0.0, 0.0])
 boundaries[1] = ti.Vector([0.0, y_max, 0.0])
@@ -47,6 +49,7 @@ class fluidPar:     #particle struct
 
 pf = fluidPar.field(shape = (NUM_PARTICLES,))
 colors = vec3.field(shape = (NUM_PARTICLES,)) #due to taichi gui restrictions particle colors cannot be included in the struct
+colors.fill(0.01)
 
 
 
@@ -70,6 +73,55 @@ def static_color(cfield: ti.template()):
     for i in range(NUM_PARTICLES):
         #Assign colors to field
         cfield[i].xyz = r, g, b
+
+@ti.func
+def get_max_vel(pfield: ti.template()):
+    max_vel = 0.0
+    for i in range(NUM_PARTICLES):
+        lin_vel = ti.math.length(pfield[i].v)
+        if lin_vel > max_vel:
+            max_vel = lin_vel
+    return max_vel
+
+@ti.kernel
+def velocity_color(cfield: ti.template(), pfield: ti.template()):
+    #Intense flickering possibly because only collisions apply and velocity changes are suddent
+    #max_vel = get_max_vel(pfield)
+    alpha = 0.1 #smoothing variable
+    max_vel = 4.0
+    r = 0.0
+    g = 0.0
+    b = 0.0
+    for i in range(NUM_PARTICLES):
+        linear_vel = ti.math.length(pfield[i].v)
+        rel_vel = min((linear_vel / max_vel) , 1.0)
+        # if i == 1000:
+        #     print(f"rel_vel: {rel_vel} || linear_vel: {linear_vel} || max_vel: {max_vel}")
+        if rel_vel <= 0.15:
+            r = 0.1
+            g = min(rel_vel / 0.15, 0.3)
+            b = 0.8
+        elif rel_vel <= 0.4:
+            r = 0.0
+            g = 1.0
+            b = 1.0 - (rel_vel - 0.35) / 0.35
+        elif rel_vel <= 0.7:
+            r = (rel_vel - 0.45) / 0.2
+            g = 1.0
+            b = 0.0
+        elif rel_vel <= 1.0:
+            r = 1.0
+            g = 1 - (rel_vel - 0.85) / 0.15
+            b = 0.0
+        prev_r, prev_g, prev_b = cfield[i].xyz
+        r = (alpha * r) + (1- alpha) * prev_r
+        g = (alpha * g) + (1- alpha) * prev_g
+        b = (alpha * b) + (1- alpha) * prev_b
+        #g = g + (cfield[i].y * 0.2)
+        #b = b + (cfield[i].z * 0.2)
+        cfield[i].xyz = r, g, b
+
+
 
 @ti.kernel
 #initialization of particles based given starting position and dimensions
@@ -96,14 +148,7 @@ def init_particles_pos(pfield : ti.template(), start: ti.template(), reset: ti.i
 
 init_particles_pos(pf, START_POS, 0)
 
-#set color mode
-if color_mode == 0:
-    static_color(colors)
-elif color_mode == 1:
-    rand_color(colors)
-else:
-    print("Invalid color mode\n\t0 - Static Color\n\t1 - Random Color")
-    exit(-1)
+
 
 
 
@@ -114,6 +159,7 @@ def update(fp):
     fp.v += (fp.a + a) * dt / 2.0 #verlet integration
     fp.p += fp.v * dt + 0.5 * a * dt ** 2
     fp.a = a
+
     return fp
 
 @ti.func
@@ -129,21 +175,21 @@ def apply_bc(fp):
         fp.v.y *= -velocity_damping
         #fp.v.xz *= friction
     elif y + PARTICLE_RADIUS > y_max:
-        fp.p.y = 1.0 - PARTICLE_RADIUS
+        fp.p.y = y_max - PARTICLE_RADIUS
         fp.v.y *= -velocity_damping
 
     if z - PARTICLE_RADIUS < 0:
         fp.p.z = PARTICLE_RADIUS
         fp.v.z *= -velocity_damping
     elif z + PARTICLE_RADIUS > z_max:
-        fp.p.z = 1.0 - PARTICLE_RADIUS
+        fp.p.z = z_max - PARTICLE_RADIUS
         fp.v.z *= -velocity_damping
 
     if x - PARTICLE_RADIUS < 0:
         fp.p.x = PARTICLE_RADIUS
         fp.v.x *= -velocity_damping
     elif x + PARTICLE_RADIUS > x_max:
-        fp.p.x = 1.0 - PARTICLE_RADIUS
+        fp.p.x = x_max - PARTICLE_RADIUS
         fp.v.x *= -velocity_damping
     return fp
 
@@ -172,15 +218,28 @@ def step(pfield: ti.template()):
     #grid.collision_detection(pfield)
     for i in pfield:
         pfield[i] = update_particle(pfield[i])
+        #if ti.math.length(pfield[i].v) > max_vel:
+        #    max_vel = pfield[i].v
 
 def save_frames(frame, start, end):
     if frame > start and frame < end:
         if frame % 5 == 0:
             window.save_image(f"save_data/frame{frame}.jpg")
 
+#set color mode
+if color_mode == 0:
+    static_color(colors)
+elif color_mode == 1:
+    rand_color(colors)
 
-window = ti.ui.Window("Test for Drawing 3d-particles", (1920, 1080))
+
+
+
+
+
+window = ti.ui.Window("3d-particles", res = (1920, 1080))
 canvas = window.get_canvas()
+gui = window.get_gui()
 canvas.set_background_color((.1, .1, .11))
 scene = window.get_scene()
 camera = ti.ui.Camera()
@@ -189,9 +248,30 @@ camera.up(0,1,0)
 camera.lookat(0, 0.1, 0)
 frame = 0
 
+
+
+
 while window.running:
-    #print(f"P_Gravity: {gravity}")
-    #print(f"particle_0 position: {pf[2000].p.x}, {pf[2000].p.y}, {pf[2000].p.z}")
+
+
+
+    # with gui.sub_window("Sub Window", x=500, y=500, width=500, height=500):
+    #     gui.text("text")
+
+    # gui.begin("Sub Window", x=0.0, y=0.4, width=0.5, height=0.5)
+    # x_max = gui.slider_float("x_bound", x_max, 0.7, 2.0)
+    # y_max = gui.slider_float("y_bound", y_max, 0.7, 2.0)
+    # z_max = gui.slider_float("z_bound", z_max, 0.7, 2.0)
+    # PARTICLE_RADIUS = gui.slider_float("Radius", PARTICLE_RADIUS, 0.002, 0.009)
+    if color_mode < 2:
+        pass
+    elif color_mode == 2:
+        velocity_color(colors, pf)
+    else:
+        print(" Invalid color mode\n\t0 - Static Color Mode\n\t1 - Random Color Mode\n\t Velocity Color Mode")
+        exit(-1)
+
+
     grid.update_grid(pf)
     for s in range(substeps):
         grid.collision_detection(pf)

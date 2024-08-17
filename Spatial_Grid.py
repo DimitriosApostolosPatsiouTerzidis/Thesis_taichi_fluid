@@ -3,7 +3,7 @@ import math
 from Constants import *
 #from main import apply_gravity
 
-ti.init(arch=ti.gpu)
+ti.init(arch=ti.cuda)
 
 
 
@@ -19,7 +19,7 @@ class SpatialGrid:
 
     def __init__(self, grid_size: ti.i32):
         self.grid_size = grid_size
-        self.cell_size = 1.0 / grid_size
+        self.cell_size = vec3(x_max / grid_size, y_max / grid_size, z_max / grid_size)
         self.par_id = ti.field(dtype=ti.i32, shape=(NUM_PARTICLES,), name="par_id")
         self.head_pointer = ti.field(dtype =ti.i32, shape=(grid_size*grid_size*grid_size,), name="head_pointer")    #cells equal to number of grid cells
         self.tail_pointer = ti.field(dtype =ti.i32, shape=(grid_size*grid_size*grid_size,), name="tail_pointer")
@@ -32,7 +32,7 @@ class SpatialGrid:
 
 
 
-        print(f"\tEstimated max particles per cell: {int(ti.floor((self.cell_size / (2 * PARTICLE_RADIUS))) ** 3)}")
+        #print(f"\tEstimated max particles per cell: {int(ti.floor((self.cell_size / (2 * PARTICLE_RADIUS))) ** 3)}")
         #self.id_in_cell = ti.field(int)
         #self.grid = ti.root.dense(ti.ijk, self.grid_size).dynamic(ti.l, 2 * max_particles_per_cell, chunk_size = 32)
         #self.cell = self.grid.dynamic(ti.l, 2 * max_particles_per_cell, chunk_size = 16)
@@ -42,16 +42,26 @@ class SpatialGrid:
         #print(f"Particle Mass: {pf[0].m}")
         print(f"\tGrid Size: {grid_size} x {grid_size} x {grid_size} ")
         print(f"\tNumber of Grid Cells: {grid_size**3}")
-        print(f"\tCell size: {self.cell_size} x {self.cell_size} x {self.cell_size}")
+        print(f"\tCell size: {self.cell_size}")
         #print(f"\tMax particles per cell: {max_particles_per_cell}")
-        assert PARTICLE_RADIUS * 2 < self.cell_size  # cell must be able to contain at least one particle
+        assert PARTICLE_RADIUS * 2 < self.cell_size[0]  # cell must be able to contain at least one particle
+        assert PARTICLE_RADIUS * 2 < self.cell_size[1]  # cell must be able to contain at least one particle
+        assert PARTICLE_RADIUS * 2 < self.cell_size[2]  # cell must be able to contain at least one particle
 
+
+    @ti.func
+    def get_cell_id(self, pos: ti.template()):
+        cell_id = ivec3(0.0, 0.0, 0.0)
+        cell_id[0] = int(pos[0] / self.cell_size[0])
+        cell_id[1] = int(pos[1] / self.cell_size[1])
+        cell_id[2] = int(pos[2] / self.cell_size[2])
+        return cell_id
 
     @ti.func
     def count_particles(self, pfield):
         self.par_count.fill(0)
         for i in range(NUM_PARTICLES):
-            cell_id = int(ti.floor(pfield[i].p / self.cell_size))
+            cell_id = self.get_cell_id(pfield[i].p)
             #print(cell_id)
             self.par_count[cell_id] += 1
 
@@ -106,7 +116,7 @@ class SpatialGrid:
     def populate_par_id(self, pfield: ti.template()):
         #ti.loop_config(serialize=True)
         for i in range(NUM_PARTICLES):
-            cell_id = ti.cast((ti.floor(pfield[i].p / self.cell_size)), ti.i32)
+            cell_id = self.get_cell_id(pfield[i].p)
             linear_idx = cell_id[0] * self.grid_size * self.grid_size + cell_id[1] * self.grid_size + cell_id[2]
             par_location = ti.atomic_add(self.cur_pointer[linear_idx], 1)
             self.par_id[par_location] = i
@@ -141,9 +151,9 @@ class SpatialGrid:
         for i in range(NUM_PARTICLES):
             pfield[i].knn = 0
             pfield[i] = apply_gravity(pfield[i])
-            p = pfield[i].p
-            cell_size = self.cell_size
-            cell_id = ti.cast((ti.floor(p / cell_size)), ti.i32)
+            #p = pfield[i].p
+            #cell_size = self.cell_size
+            cell_id = self.get_cell_id(pfield[i].p)
             #min & max assure boundary conditions
             x_begin = max(cell_id[0]-1, 0)
             X_end = min(cell_id[0]+2, self.grid_size)
