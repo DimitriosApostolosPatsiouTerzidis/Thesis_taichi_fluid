@@ -1,18 +1,11 @@
 import taichi as ti
 import math
 from Constants import *
+from math_base import *
 #from main import apply_gravity
 
+
 ti.init(arch=ti.cuda)
-
-
-
-
-@ti.func
-def apply_gravity(fp):
-    fp.f = vec3(0.0, gravity * fp.m, 0.0)
-    return fp
-
 
 
 
@@ -126,76 +119,38 @@ class SpatialGrid:
             #print(f"particle id: [{pfield[i].id}][{pfield[i].p}], Cell id: {cell_id}, Linear cell idx:[{linear_idx}],Current pointer: {self.cur_pointer[linear_idx]}  Par_id: {self.par_id[par_location]}")
         #print("===================================")
 
-    @ti.func
-    def resolve_collision(self, pfield: ti.template(), i: ti.i32, j: ti.i32):
-        #TODO: implement NN
-        #TODO: ensure non compresion
-        rel_pos = pfield[j].p - pfield[i].p
-        dist = ti.sqrt(rel_pos[0]**2 + rel_pos[1]**2 + rel_pos[2]**2)
-        delta = -dist + (2 * PARTICLE_RADIUS) #distance with radius accounted
-        if delta > 0: # in contact
-            normal = rel_pos / dist
-            f1 = normal * delta * stifness
-            #Damping force
-            M = (pfield[i].m * pfield[j].m) / (pfield[i].m + pfield[j].m)
-            K = stifness
-            C =  (1. / ti.sqrt(1. + (math.pi / ti.log(restitution_coef)) ** 2)) * ti.sqrt(K * M)
-            V = (pfield[j].v - pfield[i].v) * normal
-            f2 = C * V * normal
-            pfield[i].f += f2 - f1
-            pfield[j].f -= f2 - f1
 
 
-
-    @ti.kernel
-    def collision_detection(self, pfield: ti.template()):
-
-        for i in range(NUM_PARTICLES):
-            pfield[i].knn = 0
-            pfield[i] = apply_gravity(pfield[i])
-            #p = pfield[i].p
-            #cell_size = self.cell_size
-            cell_id = self.get_cell_id(pfield[i].p)
-            #min & max assure boundary conditions
-            x_begin = max(cell_id[0]-1, 0)
-            x_end = min(cell_id[0]+2, self.grid_size)
-
-            y_begin = max(cell_id[1]-1, 0)
-            y_end = min(cell_id[1]+2, self.grid_size)
-
-            z_begin = max(cell_id[2]-1, 0)
-            z_end = min(cell_id[2]+2, self.grid_size)
-
-            for cell_i in range(x_begin, x_end):
-                for cell_j in range(y_begin, y_end):
-                    for cell_k in range(z_begin, z_end):
-                        linear_idx = cell_i * self.grid_size * self.grid_size + cell_j * self.grid_size + cell_k
-                        for p_id in range(self.head_pointer[linear_idx], self.tail_pointer[linear_idx]):
-                            j = self.par_id[p_id]
-                            if i < j:   #no overlapping iterations
-                                self.resolve_collision(pfield, i, j)
-                                #pass
-                        pfield[i].knn += self.par_count[cell_i, cell_j, cell_k]
 
     @ti.func
-    def smoothing_kernel(self, radius: ti.f32, dist: ti.f32) -> ti.f32:
-        scale = 15/ (2 * math.pi * radius**(5))
-        value = ti.math.max(0.0, radius - dist)
-        value = (value ** 3) * scale
-        #print(vol)
-        return value
+    def density_correction(self, pfield: ti.template(), near_boundary: ti.i32, i: ti.i32):
+        if near_boundary > 0:
+            pfield[i].dens *= ti.pow(dens_cor_coef, near_boundary)
+
+
+    @ti.func
+    def boundary_search(self, cell_id):
+        near_boundary = 0
+        for i in range(3):
+            if cell_id[i] == 0 or cell_id[i]  == self.grid_size - 1:
+                near_boundary =+ 1
+                assert near_boundary <= 3
+        return near_boundary
 
     #search for particles based on radius
     @ti.kernel
     def calculate_dens(self, pfield: ti.template(), radius: ti.f32):
-        #print("HELLO")
 
         for i in range(NUM_PARTICLES):
+            #near_boundary = 0
             cell_id = self.get_cell_id(pfield[i].p)
             pfield[i].knn = 0
             pfield[i].dens = 0.0
-            pfield[i] = apply_gravity(pfield[i])
+            #pfield[i] = apply_gravity(pfield[i])
             cell_radius = ti.math.ceil(radius / self.cell_size[0], dtype = ti.i32)
+
+            near_boundary = self.boundary_search(cell_id)
+
 
             x_begin = max(cell_id[0] - cell_radius, 0)
             x_end = min(cell_id[0] + cell_radius + 1, self.grid_size)
@@ -215,12 +170,117 @@ class SpatialGrid:
                             rel_pos = pfield[j].p - pfield[i].p
                             dist = ti.sqrt(rel_pos[0]**2 + rel_pos[1]**2 + rel_pos[2]**2)
                             #print(radius)
-                            if i < j:
-                                self.resolve_collision(pfield, i, j)
+
+                            if i < j:   #no overlapping iterations
+                                resolve_collision(pfield, i, j)
 
                             if dist < radius:
-                                pfield[i].dens += self.smoothing_kernel(radius, dist) * pfield[j].m
+                                pfield[i].dens += p_V * cubic_kernel(dist, radius)
                                 #pfield[i].dens_near += self.smoothing_kernel(radius/2, dist) * pfield[j].m
+                                pfield[i].knn += 1
+            pfield[i].dens *= density
+            self.density_correction(pfield, near_boundary, i) #correction for near boundary particles
+
+    @ti.func
+    def calculate_pressure(self, pfield: ti.template()):
+        for i in range(NUM_PARTICLES):
+            pfield[i].dens = ti.max(pfield[i].dens * 1.5, density)
+            #Tait equation of state
+            pfield[i].pressure = p_stifness * (ti.pow(pfield[i].dens / density, exponent) - 1)
+
+    @ti.func
+    def cpf(self, pfield: ti.template(), i: ti.i32, j: ti.i32, rel_pos: ti.f32, radius: ti.f32) -> ti.f32:
+        dpi = pfield[i].pressure / (pfield[i].dens ** 2)
+        dpj = pfield[j].pressure / (pfield[j].dens ** 2)
+        #grad = cubic_kernel_derivative(rel_pos, radius)
+        a = -density * p_V * (dpi + dpj) * cubic_kernel_derivative(rel_pos, radius)
+        return a
+
+
+    @ti.kernel
+    def calculate_pressure_forces(self, pfield: ti.template(), radius: ti.f32):
+        self.calculate_pressure(pfield)
+
+        '''for i in range(NUM_PARTICLES):
+            cell_id = self.get_cell_id(pfield[i].p)
+            cell_radius = ti.math.ceil(radius / self.cell_size[0], dtype = ti.i32)
+
+            #min & max assure boundary conditions
+            x_begin = max(cell_id[0] - cell_radius, 0)
+            x_end = min(cell_id[0] + cell_radius + 1, self.grid_size)
+
+            y_begin = max(cell_id[1] - cell_radius, 0)
+            y_end = min(cell_id[1] + cell_radius + 1, self.grid_size)
+
+            z_begin = max(cell_id[2] - cell_radius, 0)
+            z_end = min(cell_id[2] + cell_radius + 1, self.grid_size)
+
+            for cell_i in range(x_begin, x_end):
+                for cell_j in range(y_begin, y_end):
+                    for cell_k in range(z_begin, z_end):
+                        linear_idx = cell_i * self.grid_size * self.grid_size + cell_j * self.grid_size + cell_k
+                        for p_id in range(self.head_pointer[linear_idx], self.tail_pointer[linear_idx]):
+                            j = self.par_id[p_id]
+                            rel_pos = pfield[i].p - pfield[j].p
+                            dist = ti.sqrt(rel_pos[0] ** 2 + rel_pos[1] ** 2 + rel_pos[2] ** 2)
+                            scale = (dist - 1.0 * PARTICLE_RADIUS) / dist #scaling factor to remove particle radius
+                            if dist < radius:
+                                pfield[i].a += self.cpf(pfield, i, j, scale * rel_pos, radius)'''
+
+
+    @ti.func
+    def calculate_viscosity(self, pfield: ti.template(), i: ti.i32, j: ti.i32, rel_pos: ti.f32, radius: ti.f32) -> ti.f32:
+        d = 10 #scalling factored based ondimensionality for 3D
+        rel_vel = (pfield[i].v - pfield[j].v).dot(rel_pos) #relative velocity based on the normal
+        a = d * viscosity * (pfield[j].m / pfield[j].dens) * rel_vel/(rel_pos.norm() ** 2 + 0.01 * radius ** 2) * cubic_kernel_derivative(rel_pos, radius)
+        return a
+
+    @ti.func
+    def calculate_surface_tension(self, pfield: ti.template(), i: ti.i32, j: ti.i32, rel_pos: ti.f32, radius: ti.f32) -> ti.f32:
+        d2 = (2 * PARTICLE_RADIUS) ** 2
+        r2 = rel_pos.dot(rel_pos)
+        a = ti.Vector([0.0, 0.0, 0.0])
+        if r2 > d2:
+            a = surface_tension / pfield[i].m * pfield[j].m * rel_pos * cubic_kernel(rel_pos.norm(), radius)
+        else:
+            a = surface_tension / pfield[i].m * pfield[j].m * rel_pos * cubic_kernel(ti.Vector([2* PARTICLE_RADIUS, 0.0, 0.0]).norm(), radius)
+        return a
+
+
+
+    @ti.kernel
+    def calculate_non_pressure_forces(self, pfield: ti.template(), radius: ti.f32):
+        for i in range(NUM_PARTICLES):
+            pfield[i] = apply_gravity(pfield[i]) #gravity force
+            pfield[i] = apply_bc(pfield[i])     #boundary conditions
+
+            cell_id = self.get_cell_id(pfield[i].p)
+            cell_radius = ti.math.ceil(radius / self.cell_size[0], dtype=ti.i32)
+
+            # min & max assure boundary conditions
+            x_begin = max(cell_id[0] - cell_radius, 0)
+            x_end = min(cell_id[0] + cell_radius + 1, self.grid_size)
+
+            y_begin = max(cell_id[1] - cell_radius, 0)
+            y_end = min(cell_id[1] + cell_radius + 1, self.grid_size)
+
+            z_begin = max(cell_id[2] - cell_radius, 0)
+            z_end = min(cell_id[2] + cell_radius + 1, self.grid_size)
+
+            for cell_i in range(x_begin, x_end):
+                for cell_j in range(y_begin, y_end):
+                    for cell_k in range(z_begin, z_end):
+                        linear_idx = cell_i * self.grid_size * self.grid_size + cell_j * self.grid_size + cell_k
+                        for p_id in range(self.head_pointer[linear_idx], self.tail_pointer[linear_idx]):
+                            j = self.par_id[p_id]
+                            rel_pos = pfield[i].p - pfield[j].p
+                            dist = ti.sqrt(rel_pos[0] ** 2 + rel_pos[1] ** 2 + rel_pos[2] ** 2)
+                            scale = (dist - 1 * PARTICLE_RADIUS) / dist
+                            if dist < radius:
+                                #pfield[i].a -= self.calculate_surface_tension(pfield, i, j,  rel_pos, radius)
+                                pfield[i].a += self.calculate_viscosity(pfield, i, j,  rel_pos, radius)
+                                #pfield[i].a += self.calculate_viscosity(pfield, i, j, rel_pos, radius)
+                                pfield[i].a += self.cpf(pfield, i, j, scale * rel_pos, radius)
 
 
 
@@ -262,3 +322,50 @@ class SpatialGrid:
             sum += pfield[i].dens
 
         return sum / float(NUM_PARTICLES)
+
+    @ti.kernel
+    def average_frnn(self, pfield: ti.template()) -> ti.f32:
+        sum = 0
+        for i in range(NUM_PARTICLES):
+            sum += pfield[i].knn
+
+        return sum / NUM_PARTICLES
+
+'''@ti.kernel
+    def collision_detection(self, pfield: ti.template()):
+
+        for i in range(NUM_PARTICLES):
+            pfield[i].knn = 0
+            pfield[i] = apply_gravity(pfield[i])
+            #p = pfield[i].p
+            #cell_size = self.cell_size
+            cell_id = self.get_cell_id(pfield[i].p)
+            #min & max assure boundary conditions
+            x_begin = max(cell_id[0]-1, 0)
+            x_end = min(cell_id[0]+2, self.grid_size)
+
+            y_begin = max(cell_id[1]-1, 0)
+            y_end = min(cell_id[1]+2, self.grid_size)
+
+            z_begin = max(cell_id[2]-1, 0)
+            z_end = min(cell_id[2]+2, self.grid_size)
+
+            for cell_i in range(x_begin, x_end):
+                for cell_j in range(y_begin, y_end):
+                    for cell_k in range(z_begin, z_end):
+                        linear_idx = cell_i * self.grid_size * self.grid_size + cell_j * self.grid_size + cell_k
+                        for p_id in range(self.head_pointer[linear_idx], self.tail_pointer[linear_idx]):
+                            j = self.par_id[p_id]
+                            if i < j:   #no overlapping iterations
+                                resolve_collision(pfield, i, j)
+                                #pass
+                        #pfield[i].knn += self.par_count[cell_i, cell_j, cell_k]'''
+
+""" @ti.func
+def smoothing_kernel(self, radius: ti.f32, dist: ti.f32) -> ti.f32:
+    #poly6 kernel
+    scale = 15 / (2 * math.pi * radius ** (5))
+    value = ti.math.max(0.0, radius - dist)
+    value = (value ** 3) * scale
+    # print(vol)
+    return value"""
