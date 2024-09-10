@@ -34,8 +34,8 @@ def get_max_vel(pfield: ti.template()):
 def velocity_color(cfield: ti.template(), pfield: ti.template()):
     #Intense flickering possibly because only collisions apply and velocity changes are suddent
     #max_vel = get_max_vel(pfield)
-    alpha = 0.5 #smoothing variable
-    max_vel = 8.0
+    alpha = 1.0 #smoothing variable
+    max_vel = 6.0
     r = 0.0
     g = 0.0
     b = 0.0
@@ -72,12 +72,12 @@ def velocity_color(cfield: ti.template(), pfield: ti.template()):
 @ti.kernel
 def density_color(cfield: ti.template(), pfield: ti.template()):
     alpha = 0.9 #smoothing variable
-    max_dens = 6.0
+    max_dens = 1100.0 - density
     r = 0.0
     g = 0.0
     b = 0.0
     for i in range(NUM_PARTICLES):
-        dens = pfield[i].dens
+        dens = pfield[i].dens - density
         rel_dens = min((dens / max_dens) , 1.0)
         if rel_dens <= 0.25:
             r = 0.1
