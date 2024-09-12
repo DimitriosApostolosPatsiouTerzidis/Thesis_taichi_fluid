@@ -3,7 +3,7 @@ from Constants import *
 from math_base import *
 import math
 
-ti.init(arch=ti.gpu)
+#ti.init(arch=ti.gpu)
 
 @ti.dataclass
 class fluidPar:     #particle struct
@@ -45,16 +45,13 @@ def init_particles_pos(pfield: ti.template(), start: ti.template(), reset: ti.i3
 
 @ti.func
 def update(fp):
-    alpha = 0.9
     a = fp.f / fp.m # a = F/m
-    fp.v += ((fp.a + a) * dt / 1.0) #verlet integration
+    fp.v += ((fp.a + a) * dt / 2.0) #verlet integration
     fp.p += fp.v * dt + 0.5 * a * dt ** 2
     fp.a = a
 
     return fp
 
-#TODO: optimize boundary condition to be applied only to particles in cells near boundary
-#Note: Need to apply boundary check here not in SpatialGrid
 @ti.func
 def update_particle(fp):
     #tempfp = apply_gravity(fp)

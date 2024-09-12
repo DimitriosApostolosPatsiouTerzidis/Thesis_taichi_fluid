@@ -12,7 +12,7 @@ PADDING = PARTICLE_RADIUS/2
 #p_V = (4 / 3)  * math.pi * (PARTICLE_RADIUS ** 3)  #particle volume
 
 gravity = -9.81
-dt = 0.00006
+dt = 0.00008
 substeps = 30
 
 #fluid parameters
@@ -35,13 +35,12 @@ surface_tension = 0.01
 
 
 #computational domain boundaries
-x_max, y_max, z_max = 1.9, 1.9 , 2.6
+x_max, y_max, z_max = 1.9, 1.9 , 1.9
 
 #particle space dimensions
-x_dim, y_dim, z_dim = 40, 60, 40
+x_dim, y_dim, z_dim = 50, 50, 20
 NUM_PARTICLES = x_dim * y_dim * z_dim
-print(f"Number of particles: {NUM_PARTICLES}")
-GRID_SIZE = 50
+GRID_SIZE = 40
 
 
 '''

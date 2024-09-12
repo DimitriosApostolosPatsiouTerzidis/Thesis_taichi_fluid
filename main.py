@@ -4,14 +4,13 @@ from particles import *
 from colors import *
 import numpy as np
 import time
-from taichi.examples.features.io.export_mesh import alpha
 from Spatial_Grid import SpatialGrid
 from Constants import *
 
-
 ti.init(arch=ti.cuda)
+
 START_POS = ti.Vector.field(3, dtype=ti.f32, shape=1)
-START_POS[0].xyz = 0.7, 0.1, 1.3
+START_POS[0].xyz = 0.2, 0.1, 0.9
 
 
 #initialize computational domain boundarie lines for visualization
@@ -35,6 +34,7 @@ colors.fill(0.01)
 
 #initialize particle positions
 init_particles_pos(pf, START_POS, 0)
+print(f"\tNumber of particles: {NUM_PARTICLES}")
 print(f"\tParticle mass: {pf[0].m}")
 
 #initialize spatial grid
@@ -59,7 +59,7 @@ elif color_mode == 1:
 
 
 #initialize window
-window = ti.ui.Window("3d-particles", res = (1920, 1080))
+window = ti.ui.Window("3d-particles", res = (1920, 1080), fps_limit=30)
 canvas = window.get_canvas()
 gui = window.get_gui()
 canvas.set_background_color((.1, .1, .11))
@@ -70,21 +70,14 @@ camera.up(0,1,0)
 camera.lookat(0, 0.1, 0)
 #frame = 0
 pause = 1
-fixed_radius = grid.cell_size[0] * 1.0
+base_rad = 0.0
+for i in range(3):
+    if base_rad < grid.cell_size[i]:
+        base_rad = grid.cell_size[i]
+
+fixed_radius = base_rad * 1.0
 
 while window.running:
-
-    #print(grid.cell_size[0])
-    #c_size = float(grid.cell_size[0])
-    #print(c_size)
-    # with gui.sub_window("Sub Window", x=500, y=500, width=500, height=500):
-    #     gui.text("text")
-
-    # gui.begin("Sub Window", x=0.0, y=0.4, width=0.5, height=0.5)
-    # x_max = gui.slider_float("x_bound", x_max, 0.7, 2.0)
-    # y_max = gui.slider_float("y_bound", y_max, 0.7, 2.0)
-    # z_max = gui.slider_float("z_bound", z_max, 0.7, 2.0)
-    # PARTICLE_RADIUS = gui.slider_float("Radius", PARTICLE_RADIUS, 0.002, 0.009)
     if color_mode < 2:
         pass
     elif color_mode == 2:
@@ -96,9 +89,9 @@ while window.running:
         grid.update_grid(pf)
         for s in range(substeps):
             #grid.collision_detection(pf)
-            grid.calculate_non_pressure_forces(pf, fixed_radius)
-            grid.calculate_dens(pf, fixed_radius)
-            grid.calculate_pressure_forces(pf, fixed_radius)
+            grid.calculate_forces(pf, fixed_radius)
+            #grid.calculate_dens(pf, fixed_radius)
+            grid.calculate_pressure(pf)
             step(pf)
             #grid.update_grid(pf)
 
@@ -106,7 +99,7 @@ while window.running:
     scene.set_camera(camera)
     scene.ambient_light((0.8, 0.8, 0.8))
     scene.point_light(pos=(0.5, 2.5, 6.5), color=(1, 1, 1))
-    scene.particles(pf.p, per_vertex_color = colors, radius = PARTICLE_RADIUS * 0.6)
+    scene.particles(pf.p, per_vertex_color = colors, radius = PARTICLE_RADIUS * 1.0)
     scene.lines(boundaries, indices=box_lines_indices, color=(0.99, 0.68, 0.28), width=1.0)
     canvas.scene(scene)
     #frame += 1

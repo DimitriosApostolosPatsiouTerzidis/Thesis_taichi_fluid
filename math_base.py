@@ -2,7 +2,16 @@ import taichi as ti
 import math
 from Constants import *
 
+@ti.func
+def flatten_index(i, j, k):
+    return i * GRID_SIZE * GRID_SIZE + j * GRID_SIZE + k
 
+@ti.func
+def unflatten_index(self, flat_idx):
+    i = flat_idx % self.grid_size
+    j = ((flat_idx // self.grid_size) % self.grid_size)
+    k = ((flat_idx // self.grid_size) // self.grid_size)
+    return i, j, k
 
 @ti.func
 def apply_gravity(fp):
@@ -63,54 +72,12 @@ def cubic_kernel_derivative(r, radius):
             factor = 1.0 - q
             res = k * (-factor * factor) * grad_q
     return res
-'''
 
-@ti.func
-def cubic_kernel(r_norm, radius):
-    res = ti.cast(0.0, ti.f32)
-    h = radius
-    # value of cubic spline smoothing kernel
-    k = 8 / (math.pi * (h ** 3))
-    q = r_norm / h
-    #print(f"Q: {q} ")
-    if q <= 1.0:
-        q2 = q * q
-        q3 = q2 * q
-        res = k * (1- 1.5 * q2 - 0.75 * q3)
-    return res
-
-@ti.func
-def cubic_kernel_derivative(r, radius):
-    h = radius
-    # derivative of cubic spline smoothing kernel
-    k = 8 / math.pi
-    k = 6. * k / h ** 3
-    r_norm = r.norm()
-    q = r_norm / h
-    res = ti.Vector([0.0 for _ in range(3)])
-    if r_norm > 1e-5 and q <= 1.0:
-        grad_q = r / (r_norm * h)
-        res = k  * (-3.0 * q - 2.25 * q*q) * grad_q
-
-    return res
-
-@ti.func
-def cubic_kernel(r_norm, radius):
-    scale = 15/(2 * math.pi * radius ** 5)
-    v = radius - r_norm
-    return scale * v ** 2
-
-@ti.func
-def cubic_kernel_derivative(r, radius):
-    scale = 15/ (ti.pow(radius,5) * math.pi)
-    v = radius - r.norm()
-    return (-v) * scale
-'''
 
 
 @ti.func
 def apply_bc(fp):
-    velocity_damping = 0.7
+    velocity_damping = 0.6
     #friction = 0.99
     x = fp.p.x
     y = fp.p.y
