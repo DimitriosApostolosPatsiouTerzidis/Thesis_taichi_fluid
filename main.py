@@ -28,7 +28,7 @@ for i, val in enumerate([0, 1, 0, 2, 1, 3, 2, 3, 4, 5, 4, 6, 5, 7, 6, 7, 0, 4, 1
         box_lines_indices[i] = val
 
 #initialize particle field
-pf = fluidPar.field(shape = (NUM_PARTICLES,))
+pf = Fluidpar.field(shape = (NUM_PARTICLES,))
 colors = vec3.field(shape = (NUM_PARTICLES,)) #due to taichi gui restrictions particle colors cannot be included in the struct
 colors.fill(0.01)
 
@@ -65,9 +65,9 @@ gui = window.get_gui()
 canvas.set_background_color((.1, .1, .11))
 scene = window.get_scene()
 camera = ti.ui.Camera()
-camera.position(1.5, 0.4, 1.5)
+camera.position(3.1, 1.8, 2.3)
 camera.up(0,1,0)
-camera.lookat(0, 0.1, 0)
+camera.lookat(0, 0.0, 0)
 #frame = 0
 pause = 1
 base_rad = 0.0

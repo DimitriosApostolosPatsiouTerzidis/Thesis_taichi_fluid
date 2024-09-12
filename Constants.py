@@ -1,21 +1,19 @@
 import taichi as ti
-import math
-#ti.init(arch=ti.gpu)
 
 vec3 = ti.math.vec3 #initializing taichi vec3 type
 ivec3 = ti.math.ivec3 #initializing taichi vec3 type
 
-PARTICLE_RADIUS = 0.01
-PADDING = PARTICLE_RADIUS/2
 
 
-#p_V = (4 / 3)  * math.pi * (PARTICLE_RADIUS ** 3)  #particle volume
 
+#simulation parameters
 gravity = -9.81
 dt = 0.00008
 substeps = 30
 
 #fluid parameters
+PARTICLE_RADIUS = 0.01
+PADDING = PARTICLE_RADIUS/2
 density = 1000.0    #to calculate mass
 p_V = 0.8 * (2*PARTICLE_RADIUS) ** 3    #particle volume
 stifness = 8e4      #constant affecting collision forces
@@ -26,14 +24,6 @@ viscosity = 0.01   #viscosity coefficient
 exponent = 7.0
 surface_tension = 0.01
 
-
-
-
-
-
-
-
-
 #computational domain boundaries
 x_max, y_max, z_max = 1.9, 1.9 , 1.9
 
@@ -41,19 +31,6 @@ x_max, y_max, z_max = 1.9, 1.9 , 1.9
 x_dim, y_dim, z_dim = 50, 50, 20
 NUM_PARTICLES = x_dim * y_dim * z_dim
 GRID_SIZE = 40
-
-
-'''
-#GRID_SIZE_VEC = ivec3(50, 100, 50)
-CELL_SIZE = PARTICLE_RADIUS * 3
-#computational domain boundaries
-x_max = CELL_SIZE * GRID_SIZE_VEC.x
-y_max = CELL_SIZE * GRID_SIZE_VEC.y
-z_max = CELL_SIZE * GRID_SIZE_VEC.z
-'''
-
-#max_vel: ti.f32
-#max_vel = 0.0
 
 color_mode = 0     #0->default || 1->rng_color || 2->velocity_color || 3->density_color
 assert color_mode in [0, 1, 2, 3], (" Invalid color mode\n\t"

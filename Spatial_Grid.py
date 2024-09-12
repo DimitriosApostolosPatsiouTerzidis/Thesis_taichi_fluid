@@ -1,15 +1,4 @@
-import taichi as ti
-import math
-
-from PIL.GimpGradientFile import linear
-
-from Constants import *
 from math_base import *
-#from main import apply_gravity
-
-
-#ti.init(arch=ti.cuda)
-
 
 
 @ti.data_oriented
