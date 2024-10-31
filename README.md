@@ -1,7 +1,7 @@
 ﻿# SPH real-time Solver
 An SPH particle-based fluid solver implemented on [Taichi Lang](https://www.taichi-lang.org) 
 
-![Part_sim](./images\splash_300K.png)
+![Part_sim](./images/splash_300K.png)
 
 ## Dependencies
 - Taichi Lang ( ``` pip install --upgrade taichi ```) 
