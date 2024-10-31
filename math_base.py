@@ -7,7 +7,7 @@ def flatten_index(i, j, k):
     return i * GRID_SIZE * GRID_SIZE + j * GRID_SIZE + k
 
 @ti.func
-def unflatten_index(self, flat_idx):
+def unflatten_index(flat_idx):
     i = flat_idx % self.grid_size
     j = ((flat_idx // self.grid_size) % self.grid_size)
     k = ((flat_idx // self.grid_size) // self.grid_size)
@@ -17,15 +17,15 @@ def unflatten_index(self, flat_idx):
 def apply_gravity(fp):
     fp.f = vec3(0.0, gravity * fp.m, 0.0)
     return fp
-
+'''
 @ti.func
 def resolve_collision(pfield: ti.template(), i: ti.i32, j: ti.i32):
     # TODO: implement NN
     # TODO: ensure non compresion
     rel_pos = pfield[j].p - pfield[i].p
-    dist = ti.sqrt(rel_pos[0] ** 2 + rel_pos[1] ** 2 + rel_pos[2] ** 2)
+    dist = rel_pos.norm()
     #dist = dist * 1.4
-    delta = -dist + (2 * PARTICLE_RADIUS)  # distance with radius accounted
+    delta = -dist + (2.0 * PARTICLE_RADIUS)  # distance with radius accounted
     if delta > 0:  # in contact
         normal = rel_pos / dist
         f1 = normal * delta * stifness
@@ -37,6 +37,7 @@ def resolve_collision(pfield: ti.template(), i: ti.i32, j: ti.i32):
         f2 = C * V * normal
         pfield[i].f += f2 - f1
         pfield[j].f -= f2 - f1
+        '''
 
 @ti.func
 def cubic_kernel(r_norm, radius):
@@ -46,13 +47,12 @@ def cubic_kernel(r_norm, radius):
     k = 8 / (math.pi * (h ** 3))
     q = r_norm / h
     #print(f"Q: {q} ")
-    if q <= 1.0:
-        if q <= 0.5:
-            q2 = q * q
-            q3 = q2 * q
-            res = k * (6.0 * q3 - 6.0 * q2 + 1)
-        else:
-            res = k * 2 * ti.pow(1 - q, 3.0)
+    if q <= 0.5:
+        q2 = q * q
+        q3 = q2 * q
+        res = k * (6.0 * q3 - 6.0 * q2 + 1)
+    else:
+        res = k * 2 * ti.pow(1 - q, 3.0)
     return res
 
 @ti.func
@@ -73,11 +73,39 @@ def cubic_kernel_derivative(r, radius):
             res = k * (-factor * factor) * grad_q
     return res
 
+@ti.func
+def near_cubic_kernel(r_norm, radius):
+    res = ti.cast(0.0, ti.f32)
+    h = radius
+    k = 8 / (math.pi * (h ** 3))
+    # value of cubic spline smoothing kernel
+
+    if r_norm > 1e-5:
+        q = r_norm / h
+        res = k *(1 - q) ** 3
+    return res
+
+@ti.func
+def near_cubic_kernel_derivative(r, radius):
+    res = ti.Vector([0.0 for _ in range(3)])
+    r_norm = r.norm()
+    h = radius
+    k = 8 / math.pi
+    k = 6.0 * k / h ** 3
+    # value of cubic spline smoothing kernel
+    q = r_norm / h
+
+    #print(f"Q: {q} ")
+    if r_norm > 1e-5 and q <= 1.0:
+        grad_q = r / (r_norm * h)
+        res = k * ( (1-q) ** 2 ) * grad_q
+    return res
+
 
 
 @ti.func
 def apply_bc(fp):
-    velocity_damping = 0.6
+    velocity_damping = 0.5
     #friction = 0.99
     x = fp.p.x
     y = fp.p.y
@@ -106,9 +134,6 @@ def apply_bc(fp):
         fp.v.x *= -velocity_damping
     return fp
 
-"""
-@ti.func
-def compute_pressure(pfield: ti.template(), i: ti.i32, j: ti.i32):
-"""
+
 
 
